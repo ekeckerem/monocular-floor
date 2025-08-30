@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monocular Floor — Step 1</title>
+  <link rel="stylesheet" href="./style.css" />
+  <!-- Three.js (global THREE namespace). The deprecation warning is safe to ignore for now. -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Monocular Floor — Step 1 (Picker + Stubs)</h1>
+    </header>
+
+    <main class="grid">
+      <!-- Left: image + point picker overlay -->
+      <section class="panel">
+        <div class="toolbar">
+          <input id="fileInput" type="file" accept="image/*" />
+          <button id="btnPickImage" class="btn">Choose…</button>
+          <button id="btnTest" class="btn">Load Test Image</button>
+          <button id="btnAutoOrder" class="btn">Auto‑order (CW)</button>
+          <button id="btnDeleteLast" class="btn">Delete Last</button>
+          <button id="btnClear" class="btn">Clear</button>
+          <button id="btnExport" class="btn primary">Export JSON</button>
+          <button id="btnSend" class="btn">Send to Backend</button>
+          <button id="btnPose" class="btn primary">Recover Pose → Align 3D</button>
+        </div>
+
+
+
+        <div class="canvasWrap" id="dropZone" title="Drop an image here">
+          <!-- The image and points are drawn on this HiDPI canvas -->
+          <canvas id="imgCanvas"></canvas>
+        </div>
+        <!-- Visible preview below (debug) -->
+        <img id="debugPreview" alt="preview" style="display:none; max-width:100%; margin-top:8px; border:1px dashed #2a3148; border-radius:8px;"/>
+
+        <div class="status">
+          <div>Clicks: <span id="count">0</span></div>
+          <div>Hover: <span id="hover">—</span></div>
+          <div>Drag: <span id="drag">—</span></div>
+          <div>Image size: <span id="imgSizeEl">—</span></div>
+        </div>
+
+        <details class="payload">
+          <summary>Payload preview</summary>
+          <pre id="payload"></pre>
+        </details>
+      </section>
+
+      <!-- Right: Three.js preview stub -->
+      <section class="panel">
+        <div class="previewHeader">3D Preview (stub)</div>
+        <div class="previewWrap">
+          <canvas id="threeCanvas"></canvas>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- IMPORTANT: bump the query to bust cache when you update JS -->
+  <script src="./main.js?v=6"></script>
+</body>
+</html>
