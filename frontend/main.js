@@ -1,5 +1,5 @@
-// main.js v6 (stable)
-console.log('main.js v6 OK');
+// main.js v7 (fixed image loading issues)
+console.log('main.js v7 OK');
 
 // ============ DOM refs ============
 const fileInput   = document.getElementById('fileInput');
@@ -12,7 +12,7 @@ const payloadPre  = document.getElementById('payload');
 const countEl     = document.getElementById('count');
 const hoverEl     = document.getElementById('hover');
 const dragEl      = document.getElementById('drag');
-const imgSizeEl   = document.getElementById('imgSize'); // <-- FIXED id
+const imgSizeEl   = document.getElementById('imgSizeEl'); // <-- FIXED: was 'imgSize'
 
 const btnAutoOrder  = document.getElementById('btnAutoOrder');
 const btnDeleteLast = document.getElementById('btnDeleteLast');
@@ -21,15 +21,13 @@ const btnExport     = document.getElementById('btnExport');
 const btnSend       = document.getElementById('btnSend');
 const btnPose       = document.getElementById('btnPose');
 
-// ---- DEBUG + API base ----
 const API_BASE = 'http://127.0.0.1:8000';
-
-// Create a visible debug panel so you don't need DevTools to see results
 const poseDebug = document.createElement('pre');
-poseDebug.id = 'poseDebug';
 poseDebug.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:#111a25;color:#d8deea;border:1px solid #223047;border-radius:8px;padding:8px;margin:8px 0;max-height:220px;overflow:auto;';
-poseDebug.textContent = 'Align 3D debug will appear here…';
+poseDebug.textContent = 'Align 3D debug…';
 (document.querySelector('.panel') || document.body).appendChild(poseDebug);
+const dbg = (...a)=>{ const s=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' ');
+  console.log('[POSE]', ...a); poseDebug.textContent += '\n' + s; };
 
 function dbgLine(...args){
   const s = args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join(' ');
@@ -44,20 +42,6 @@ async function safeFetchJSON(url, options){
   try { return { ok: res.ok, status: res.status, json: JSON.parse(text), raw: text }; }
   catch { return { ok: res.ok, status: res.status, json: null, raw: text }; }
 }
-
-function currentImageDataURL(){
-  if (!hasImage) return null;
-  const c = document.createElement('canvas');
-  c.width = img.naturalWidth || imgW;
-  c.height = img.naturalHeight || imgH;
-  const cx = c.getContext('2d');
-  cx.drawImage(img, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.92);
-}
-
-
-// Sanity logs
-if (!btnPose) console.warn('No #btnPose found in HTML (add <button id="btnPose">Align 3D</button>)');
 
 // ============ Canvas setup (HiDPI-safe) ============
 const ctx = imgCanvas.getContext('2d');
@@ -164,9 +148,9 @@ function draw() {
 
   // status + payload
   if (countEl) countEl.textContent = String(pts.length);
-  if (hoverEl) hoverEl.textContent = (hoverIndex>=0)? String(hoverIndex+1) : '–';
-  if (dragEl)  dragEl.textContent  = (dragIndex>=0)? String(dragIndex+1)  : '–';
-  if (imgSizeEl) imgSizeEl.textContent = hasImage ? `${imgW}×${imgH}` : '–';
+  if (hoverEl) hoverEl.textContent = (hoverIndex>=0)? String(hoverIndex+1) : '—';
+  if (dragEl)  dragEl.textContent  = (dragIndex>=0)? String(dragIndex+1)  : '—';
+  if (imgSizeEl) imgSizeEl.textContent = hasImage ? `${imgW}×${imgH}` : '—';
 
   const payload = buildPayload(false);
   if (payloadPre) payloadPre.textContent = JSON.stringify(payload, null, 2);
@@ -176,42 +160,160 @@ function draw() {
 function loadFromURL(url, revokeAfterLoad=false) {
   console.log('loadFromURL', url.slice(0, 50) + '...');
   const im = new Image();
+
+  // Add error handling with more details
+  im.onerror = (e) => {
+    console.error('img.onerror', e);
+    hasImage = false;
+    alert('Could not load that image. Try PNG/JPG/WebP.');
+    draw(); // Redraw to show empty state
+  };
+
   im.onload = () => {
     console.log('img.onload', im.naturalWidth, im.naturalHeight);
-    img = im; hasImage = true; imgW = im.naturalWidth; imgH = im.naturalHeight; pts = [];
-    if (debugPreview){ debugPreview.src = url; debugPreview.style.display='block'; }
+
+    // Validate image dimensions
+    if (im.naturalWidth === 0 || im.naturalHeight === 0) {
+      console.error('Invalid image dimensions');
+      alert('Invalid image: zero width or height');
+      return;
+    }
+
+    img = im;
+    hasImage = true;
+    imgW = im.naturalWidth;
+    imgH = im.naturalHeight;
+    pts = [];
+
+    if (debugPreview) {
+      debugPreview.src = url;
+      debugPreview.style.display='block';
+    }
+
     draw();
-    if (revokeAfterLoad) URL.revokeObjectURL(url);
+
+    if (revokeAfterLoad) {
+      // Add small delay before revoking to ensure image is fully loaded
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
   };
-  im.onerror = (e) => { console.error('img.onerror', e); hasImage = false; alert('Could not load that image. Try PNG/JPG/WebP.'); };
+
+  // Set crossOrigin before src for external images
+  if (url.startsWith('http') && !url.startsWith(window.location.origin)) {
+    im.crossOrigin = 'anonymous';
+  }
+
   im.src = url;
 }
-function loadFromDataURL(dataURL){ loadFromURL(dataURL, false); }
+
+function loadFromDataURL(dataURL){
+  if (!dataURL || !dataURL.startsWith('data:image/')) {
+    console.error('Invalid data URL');
+    alert('Invalid image data');
+    return;
+  }
+  loadFromURL(dataURL, false);
+}
+
 function handleFile(file){
-  if (!file) return;
-  if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
+  if (!file) {
+    console.log('No file selected');
+    return;
+  }
+
+  if (!file.type.startsWith('image/')) {
+    alert('Please choose an image file.');
+    return;
+  }
+
+  // Check file size (optional - prevents very large files)
+  if (file.size > 10 * 1024 * 1024) { // 10MB limit
+    alert('Image file is too large (max 10MB)');
+    return;
+  }
+
+  console.log('Loading file:', file.name, file.type, file.size + ' bytes');
+
   const reader = new FileReader();
-  reader.onload = (e)=> loadFromDataURL(e.target.result);
-  reader.onerror= (e)=>{ console.error('FileReader error:', e); alert('Failed to read the file.'); };
+  reader.onload = (e) => {
+    console.log('FileReader loaded, data length:', e.target.result?.length || 0);
+    loadFromDataURL(e.target.result);
+  };
+  reader.onerror = (e) => {
+    console.error('FileReader error:', e);
+    alert('Failed to read the file.');
+  };
   reader.readAsDataURL(file);
 }
 
 // ============ Input handlers ============
-btnPickImage?.addEventListener('click', ()=> fileInput.click());
-fileInput?.addEventListener('change', (e)=> { handleFile(e.target.files[0]); e.target.value=''; });
-
-btnTest?.addEventListener('click', ()=>{
-  const c=document.createElement('canvas'); c.width=640;c.height=480;
-  const x=c.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,640,480);
-  x.strokeStyle='#888'; x.lineWidth=8; x.strokeRect(20,20,600,440);
-  loadFromDataURL(c.toDataURL('image/png'));
+btnPickImage?.addEventListener('click', ()=> {
+  console.log('Pick image clicked');
+  fileInput.click();
 });
 
-// Drag & drop
-for (const ev of ['dragenter','dragover']) dropZone?.addEventListener(ev, e=>{e.preventDefault(); e.dataTransfer.dropEffect='copy';});
-for (const ev of ['dragleave','drop'])     dropZone?.addEventListener(ev, e=>{e.preventDefault();});
-dropZone?.addEventListener('drop', (e)=>{ const f=e.dataTransfer.files&&e.dataTransfer.files[0]; handleFile(f); });
+fileInput?.addEventListener('change', (e)=> {
+  console.log('File input changed, files:', e.target.files?.length || 0);
+  handleFile(e.target.files[0]);
+  e.target.value=''; // Reset input
+});
 
+btnTest?.addEventListener('click', ()=>{
+  console.log('Test image clicked');
+  const c=document.createElement('canvas');
+  c.width=640;
+  c.height=480;
+  const x=c.getContext('2d');
+
+  // Create a more visible test pattern
+  x.fillStyle='#ffffff';
+  x.fillRect(0,0,640,480);
+
+  // Add some visual elements
+  x.strokeStyle='#888888';
+  x.lineWidth=4;
+  x.strokeRect(20,20,600,440);
+
+  x.fillStyle='#ff6b6b';
+  x.fillRect(50, 50, 100, 100);
+
+  x.fillStyle='#4ecdc4';
+  x.fillRect(490, 330, 100, 100);
+
+  x.fillStyle='#45b7d1';
+  x.font = '24px Arial';
+  x.fillText('Test Image', 270, 250);
+
+  const dataURL = c.toDataURL('image/png');
+  console.log('Test image created, data URL length:', dataURL.length);
+  loadFromDataURL(dataURL);
+});
+
+// Drag & drop with better error handling
+for (const ev of ['dragenter','dragover']) {
+  dropZone?.addEventListener(ev, e=>{
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect='copy';
+    dropZone.style.backgroundColor = '#1a2332'; // Visual feedback
+  });
+}
+
+for (const ev of ['dragleave','drop']) {
+  dropZone?.addEventListener(ev, e=>{
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.style.backgroundColor = ''; // Reset visual feedback
+  });
+}
+
+dropZone?.addEventListener('drop', (e)=> {
+  console.log('Drop event, files:', e.dataTransfer.files?.length || 0);
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  handleFile(f);
+});
+
+// Mouse event handlers remain the same
 imgCanvas.addEventListener('mousemove', (e)=>{
   const rect=imgCanvas.getBoundingClientRect();
   const p={x:e.clientX-rect.left,y:e.clientY-rect.top};
@@ -225,6 +327,7 @@ imgCanvas.addEventListener('mousemove', (e)=>{
   if (dragIndex>=0){ pts[dragIndex]=clampPointToImage(canvasToImg(p)); }
   draw();
 });
+
 imgCanvas.addEventListener('mousedown', (e)=>{
   if(!hasImage) return;
   const rect=imgCanvas.getBoundingClientRect();
@@ -233,6 +336,7 @@ imgCanvas.addEventListener('mousedown', (e)=>{
   else if (insideDrawnImage(p.x,p.y)) { pts.push(clampPointToImage(canvasToImg(p))); dragIndex=pts.length-1; }
   draw();
 });
+
 window.addEventListener('mouseup', ()=>{ dragIndex=-1; draw(); });
 imgCanvas.addEventListener('mouseleave', ()=>{ hoverIndex=-1; dragIndex=-1; draw(); });
 
@@ -240,6 +344,7 @@ window.addEventListener('keydown', (e)=>{
   if (e.key==='Delete'||e.key==='Backspace'){ if (pts.length>0){ pts.pop(); draw(); } }
   if (e.key.toLowerCase()==='c' && (e.ctrlKey||e.metaKey)){ navigator.clipboard.writeText(JSON.stringify(buildPayload(true),null,2)); }
 });
+
 btnAutoOrder?.addEventListener('click', ()=>{ pts=autoOrderCW(pts); draw(); });
 btnDeleteLast?.addEventListener('click', ()=>{ if (pts.length>0) pts.pop(); draw(); });
 btnClear?.addEventListener('click', ()=>{ pts=[]; draw(); });
@@ -254,17 +359,29 @@ function currentImageDataURL(){
   if (!hasImage) return null;
   const c=document.createElement('canvas');
   c.width=img.naturalWidth||imgW; c.height=img.naturalHeight||imgH;
-  const cx=c.getContext('2d'); cx.drawImage(img,0,0,c.width,c.height);
-  return c.toDataURL('image/jpeg',0.92);
+  const cx=c.getContext('2d');
+  try {
+    cx.drawImage(img,0,0,c.width,c.height);
+    return c.toDataURL('image/jpeg',0.92);
+  } catch (e) {
+    console.error('Error creating data URL:', e);
+    return null;
+  }
 }
 
 // ---- Send to homography (Step-2) ----
 btnSend?.addEventListener('click', async ()=>{
+  const imageDataURL = currentImageDataURL();
+  if (!imageDataURL) {
+    alert('No valid image to send');
+    return;
+  }
+
   const body={
     image_size:{width:imgW,height:imgH},
     points_img:pts.map(p=>({x:Math.round(p.x),y:Math.round(p.y)})),
     include_image:true,
-    image_b64:currentImageDataURL()
+    image_b64:imageDataURL
   };
   try{
     const res=await fetch('http://127.0.0.1:8000/estimate-homography',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -287,13 +404,13 @@ function initThreeExtras(renderer,scene,camera,controls){
   three={ renderer, scene, camera, controls, floorMesh:null, texLoader:new THREE.TextureLoader() };
 }
 
-// ============ Payload builder ============
-function buildPayload(includeImageB64){
+function buildPayload(includeImageB64) {
+  const imageDataURL = includeImageB64 ? currentImageDataURL() : null;
   return {
-    image_size:{ width:imgW, height:imgH },
-    points_img: pts.map(p=>({ x:Math.round(p.x), y:Math.round(p.y) })),
-    include_image: includeImageB64,
-    image_b64: includeImageB64 ? currentImageDataURL() : null
+    image_size: { width: imgW, height: imgH },
+    points_img: pts.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+    include_image: !!includeImageB64,
+    image_b64: imageDataURL
   };
 }
 
@@ -335,118 +452,71 @@ animate();
 
 // ============ Step-3: Pose -> Align 3D ============
 btnPose?.addEventListener('click', async ()=>{
-  dbgLine('—— Align 3D clicked ——');
-  if (!hasImage || pts.length < 4){
-    dbgLine('Need image + >=4 points'); alert('Load image and click at least 4 floor points.'); return;
+  dbg('—— Align 3D clicked ——');
+  if (!hasImage || pts.length < 4) { alert('Pick ≥4 floor points'); return; }
+
+  // 1) Prove backend reachable
+  let ping;
+  try { ping = await fetch(API_BASE + '/').then(r=>r.json()); }
+  catch(e){ dbg('Ping failed:', String(e)); alert('Backend not reachable at ' + API_BASE); return; }
+  dbg('Ping:', ping);
+
+  // 2) Build request with TRUE base64 image
+  const body = buildPayload(true);
+  if (!body.image_b64) {
+    alert('Could not generate image data');
+    return;
   }
 
-  // Quick ping (proves backend reachable & CORS OK)
+  // 3) Call pose and show raw+JSON
+  let res, txt, j;
   try {
-    const ping = await safeFetchJSON(`${API_BASE}/`);
-    dbgLine('Ping:', ping.status, ping.json || ping.raw);
-  } catch (e) {
-    dbgLine('Ping failed:', String(e));
-    alert('Cannot reach backend at ' + API_BASE); return;
-  }
-
-  const body = {
-    image_size: { width: imgW, height: imgH },
-    points_img: pts.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
-    include_image: true,
-    image_b64: currentImageDataURL()
-  };
-
-  dbgLine('Sending /estimate-pose …');
-  let r;
-  try {
-    r = await safeFetchJSON(`${API_BASE}/estimate-pose`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body)
+    res = await fetch(API_BASE + '/estimate-pose', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
+    txt = await res.text(); dbg('Raw:', txt.slice(0, 400));
+    j = JSON.parse(txt);
   } catch (e) {
-    dbgLine('Fetch error:', String(e));
-    alert('Pose request failed: ' + e); return;
+    dbg('Pose fetch/parse error:', String(e));
+    alert('Pose failed (see debug panel).'); return;
+  }
+  dbg('JSON:', j);
+
+  if (j.status !== 'ok' || !j.three_pose) {
+    alert('Pose response missing three_pose (see debug panel).'); return;
   }
 
-  if (!r.ok){
-    dbgLine('HTTP not OK:', r.status, r.raw);
-    alert(`Pose HTTP ${r.status}\n${r.raw}`); return;
-  }
-  if (!r.json){
-    dbgLine('Non-JSON response:', r.raw.slice(0,300));
-    alert('Pose returned non-JSON. See debug panel.'); return;
-  }
-
-  const j = r.json;
-  dbgLine('Pose JSON:', j);
-
-  if (j.status !== 'ok' || !j.three_pose){
-    dbgLine('Backend says not ok or no three_pose.');
-    alert('Pose response missing data. See debug panel.'); return;
-  }
-
-  // 1) Set background to your photo
+  // 4) Visibly change background so you SEE it worked
   const texURL = currentImageDataURL();
-  three.texLoader.load(texURL, (tex)=>{
-    // Make background visible immediately
-    if (three.renderer.outputColorSpace) {
-      // modern three
-      tex.colorSpace = THREE.SRGBColorSpace;
-    } else {
-      // older three fallback
-      tex.encoding = THREE.sRGBEncoding;
-      three.renderer.outputEncoding = THREE.sRGBEncoding;
-    }
-    three.scene.background = tex;
-    three.renderer.render(three.scene, three.camera);
-  });
-
-  // 2) Camera intrinsics → FOV
-  const fovY = j.three_pose.fov_y_deg || 50;
-  three.camera.fov = fovY;
-  three.camera.updateProjectionMatrix();
-
-  // 3) Camera extrinsics (already converted to Three basis by backend)
-  const p = j.three_pose.position;       // [x,y,z]
-  const q = j.three_pose.quaternion;     // [x,y,z,w]
-  if (!Array.isArray(p) || !Array.isArray(q)) {
-    dbgLine('Bad three_pose fields:', p, q);
-    alert('Pose fields malformed. See debug.'); return;
+  if (texURL) {
+    three.texLoader.load(texURL, (tex)=>{
+      if (three.renderer.outputColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+      else { tex.encoding = THREE.sRGBEncoding; three.renderer.outputEncoding = THREE.sRGBEncoding; }
+      three.scene.background = tex;
+      three.renderer.render(three.scene, three.camera);
+    });
   }
 
+  // 5) Apply camera pose
+  const { position:[x,y,z], quaternion:[qx,qy,qz,qw], fov_y_deg } = j.three_pose;
+  three.camera.fov = fov_y_deg || 50; three.camera.updateProjectionMatrix();
   three.camera.matrixAutoUpdate = false;
-  const m = new THREE.Matrix4();
-  m.compose(
-    new THREE.Vector3(p[0], p[1], p[2]),
-    new THREE.Quaternion(q[0], q[1], q[2], q[3]),
-    new THREE.Vector3(1,1,1)
-  );
-  three.camera.matrixWorld.copy(m);
-  three.camera.matrixWorldNeedsUpdate = true;
+  const M = new THREE.Matrix4();
+  M.compose(new THREE.Vector3(x,y,z), new THREE.Quaternion(qx,qy,qz,qw), new THREE.Vector3(1,1,1));
+  three.camera.matrixWorld.copy(M); three.camera.matrixWorldNeedsUpdate = true;
 
-  // 4) Floor mesh sized to rect_size
-  const W = j.rect_size?.width  ?? 1;
-  const H = j.rect_size?.height ?? 1;
-  if (!three.floorMesh){
-    const g = new THREE.PlaneGeometry(W, H, 1, 1);
-    g.translate(W/2, H/2, 0); // origin at TL to match our plane coords
+  // 6) Add/update translucent floor (so you see a mesh)
+  const W = j.rect_size?.width ?? 1, H = j.rect_size?.height ?? 1;
+  if (!three.floorMesh) {
+    const g = new THREE.PlaneGeometry(W, H, 1, 1); g.translate(W/2, H/2, 0);
     const mat = new THREE.MeshBasicMaterial({ color: 0x4da3ff, opacity: 0.35, transparent: true, side: THREE.DoubleSide });
-    three.floorMesh = new THREE.Mesh(g, mat);
-    three.scene.add(three.floorMesh);
+    three.floorMesh = new THREE.Mesh(g, mat); three.scene.add(three.floorMesh);
   } else {
     three.floorMesh.geometry.dispose();
-    const g = new THREE.PlaneGeometry(W, H, 1, 1);
-    g.translate(W/2, H/2, 0);
+    const g = new THREE.PlaneGeometry(W, H, 1, 1); g.translate(W/2, H/2, 0);
     three.floorMesh.geometry = g;
   }
+  three.controls?.target.set(W/2, H/2, 0); three.controls?.update();
 
-  // Center controls on the plane so it’s obvious something changed
-  if (three.controls) {
-    three.controls.target.set(W/2, H/2, 0);
-    three.controls.update();
-  }
-
-  dbgLine('✓ Applied background, camera, and floor mesh.');
+  dbg('✓ Applied background, camera, floor mesh');
 });
-
